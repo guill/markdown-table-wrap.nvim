@@ -2,6 +2,18 @@
 
 All notable changes to `markdown-table-wrap.nvim` are documented here.
 
+## Unreleased
+
+### Added
+
+- `filetypes` configuration option for selecting which buffer filetypes the plugin treats as Markdown. Defaults to `{ "markdown", "md", "quarto", "rmarkdown" }`, matching previous behavior. This allows rendering in chat and AI streaming output buffers that display Markdown under custom filetypes such as `"codecompanion"` or `"opencode_output"`.
+- `refresh_auto({ bufnr = <buf> })` now renders into a specific buffer when that buffer is not the current buffer, provided the buffer is visible in at least one window. Window-local operations during rendering execute against the target buffer's window via `nvim_win_call`. This enables AI chat plugins to drive table rendering from streaming-output callbacks without depending on the user's current focus.
+
+### Changed
+
+- The internal `is_markdown_buffer` check and the `gx` mapping autocmd now read the allowed filetype list from `M.config.filetypes` instead of a hardcoded list.
+- `refresh_auto` is now a small dispatch wrapper around `refresh_auto_impl`. Behavior for the existing autocmd-driven, same-buffer path is unchanged; the new cross-buffer path is opt-in via `opts.bufnr`.
+
 ## 0.1.2 - Setup And Defaults Cleanup
 
 ### Fixed

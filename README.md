@@ -72,6 +72,7 @@ return {
     dir = "~/Code/lazyvim-table/markdown-table-wrap.nvim",
     ft = "markdown",
     opts = {
+      filetypes = { "markdown", "md", "quarto", "rmarkdown" },
       max_width_ratio = 0.9,
       min_col_width = 8,
       max_col_width = 50,
@@ -207,6 +208,7 @@ The plugin maps `gx` in Markdown buffers by default. This is necessary because r
 
 ```lua
 require("markdown-table-wrap").setup({
+  filetypes = { "markdown", "md", "quarto", "rmarkdown" },
   max_width_ratio = 0.9,
   min_col_width = 8,
   max_col_width = 50,
@@ -235,14 +237,14 @@ require("markdown-table-wrap").setup({
   highlights = {},
   map_gx = true,
   link = {
-    wiki = { icon = " ", highlight = "MarkdownTableWrapWikiLink", scope_highlight = "MarkdownTableWrapWikiLink" },
-    image = " ",
+    wiki = { icon = " ", highlight = "MarkdownTableWrapWikiLink", scope_highlight = "MarkdownTableWrapWikiLink" },
+    image = " ",
     custom = {
-      github = { pattern = "github", icon = " " },
+      github = { pattern = "github", icon = " " },
       gitlab = { pattern = "gitlab", icon = "󰮠 " },
-      youtube = { pattern = "youtube", icon = " " },
+      youtube = { pattern = "youtube", icon = " " },
       bilibili = { pattern = "bilibili", icon = "󰟴 " },
-      cern = { pattern = "cern.ch", icon = " " },
+      cern = { pattern = "cern.ch", icon = " " },
     },
   },
 })
@@ -250,6 +252,7 @@ require("markdown-table-wrap").setup({
 
 Options:
 
+- `filetypes`: list of buffer filetypes the plugin treats as Markdown. Defaults to `{ "markdown", "md", "quarto", "rmarkdown" }`. Append filetypes such as `"codecompanion"` or `"opencode_output"` to render tables in chat or AI streaming buffers that display Markdown under a custom filetype. Invalid or empty values fall back to the default list.
 - `max_width_ratio`: maximum preview table width as a ratio of the current window width.
 - `min_col_width`: minimum content width for each column.
 - `max_col_width`: maximum natural content width before wrapping.

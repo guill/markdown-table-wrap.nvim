@@ -151,6 +151,7 @@ CONFIGURATION                              *markdown-table-wrap-configuration*
 Default setup:
 >
   require("markdown-table-wrap").setup({
+    filetypes = { "markdown", "md", "quarto", "rmarkdown" },
     max_width_ratio = 0.9,
     min_col_width = 8,
     max_col_width = 50,
@@ -193,6 +194,13 @@ Default setup:
 <
 
 Important options:
+
+filetypes~
+    List of buffer filetypes that the plugin treats as Markdown. Defaults to
+    { "markdown", "md", "quarto", "rmarkdown" }. Add filetypes such as
+    "codecompanion" or "opencode_output" to enable rendering in chat or
+    streaming output buffers that display Markdown content under a custom
+    filetype. Invalid or empty values fall back to the default list.
 
 max_width_ratio~
     Maximum rendered table width as a ratio of the current window width.

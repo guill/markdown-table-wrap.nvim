@@ -3,6 +3,7 @@ local M = {}
 M.version = "0.1.2"
 
 local defaults = {
+  filetypes = { "markdown", "md", "quarto", "rmarkdown" },
   max_width_ratio = 0.9,
   min_col_width = 8,
   max_col_width = 50,
@@ -56,12 +57,33 @@ M.state = {
   did_setup = false,
 }
 
-local function is_markdown_buffer()
-  local ft = vim.bo.filetype
-  return ft == "markdown" or ft == "md" or ft == "quarto" or ft == "rmarkdown"
+local function is_markdown_buffer(bufnr)
+  local ft = bufnr and vim.bo[bufnr].filetype or vim.bo.filetype
+  for _, allowed in ipairs(M.config.filetypes) do
+    if ft == allowed then
+      return true
+    end
+  end
+  return false
 end
 
 local function validate_config()
+  if type(M.config.filetypes) ~= "table" or vim.tbl_isempty(M.config.filetypes) then
+    M.config.filetypes = vim.deepcopy(defaults.filetypes)
+  else
+    local valid = {}
+    for _, ft in ipairs(M.config.filetypes) do
+      if type(ft) == "string" and ft ~= "" then
+        table.insert(valid, ft)
+      end
+    end
+    if #valid == 0 then
+      M.config.filetypes = vim.deepcopy(defaults.filetypes)
+    else
+      M.config.filetypes = valid
+    end
+  end
+
   M.config.max_width_ratio = tonumber(M.config.max_width_ratio) or defaults.max_width_ratio
   M.config.min_col_width = math.max(1, tonumber(M.config.min_col_width) or defaults.min_col_width)
   M.config.max_col_width = math.max(M.config.min_col_width, tonumber(M.config.max_col_width) or defaults.max_col_width)
@@ -230,9 +252,7 @@ function M.preview()
   M.inline_preview()
 end
 
-function M.refresh_auto(opts)
-  opts = opts or {}
-  local bufnr = vim.api.nvim_get_current_buf()
+local function refresh_auto_impl(bufnr, opts)
   local inline = require("markdown-table-wrap.inline")
 
   if not M.config.auto_preview and not opts.force then
@@ -243,7 +263,7 @@ function M.refresh_auto(opts)
     return
   end
 
-  if not is_markdown_buffer() then
+  if not is_markdown_buffer(bufnr) then
     inline.clear(bufnr)
     return
   end
@@ -279,6 +299,10 @@ function M.refresh_auto(opts)
     return
   end
 
+  if bufnr ~= vim.api.nvim_get_current_buf() then
+    return
+  end
+
   local cursor = vim.api.nvim_win_get_cursor(0)
   local table_info = parser.parse_at_cursor(bufnr, cursor[1])
 
@@ -303,6 +327,28 @@ function M.refresh_auto(opts)
   inline.show(bufnr, table_info, M.config)
   M.state.last_signature[bufnr] = signature
   M.state.inline_buf = bufnr
+end
+
+function M.refresh_auto(opts)
+  opts = opts or {}
+  local bufnr = opts.bufnr or vim.api.nvim_get_current_buf()
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+
+  if bufnr == vim.api.nvim_get_current_buf() then
+    refresh_auto_impl(bufnr, opts)
+    return
+  end
+
+  local wins = vim.fn.win_findbuf(bufnr)
+  if #wins == 0 then
+    return
+  end
+
+  vim.api.nvim_win_call(wins[1], function()
+    refresh_auto_impl(bufnr, opts)
+  end)
 end
 
 function M.schedule_refresh(opts)
@@ -493,7 +539,7 @@ local function create_autocmds()
 
   vim.api.nvim_create_autocmd("FileType", {
     group = M.state.augroup,
-    pattern = { "markdown", "md", "quarto", "rmarkdown" },
+    pattern = M.config.filetypes,
     callback = function(args)
       if not M.config.map_gx then
         return
