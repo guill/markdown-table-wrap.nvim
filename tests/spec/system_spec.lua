@@ -1,5 +1,9 @@
 local h = require("tests.helpers")
 
+local function is_concealed(details)
+  return details.conceal == "" or details.conceal_lines == ""
+end
+
 h.test("system render chain only conceals detected table range", function()
   local plugin = require("markdown-table-wrap")
   local inline = require("markdown-table-wrap.inline")
@@ -31,7 +35,7 @@ h.test("system render chain only conceals detected table range", function()
     for _, mark in ipairs(marks) do
       local row = mark[2]
       local details = mark[4] or {}
-      if details.conceal == "" then
+      if is_concealed(details) then
         concealed_rows[row] = true
       end
       for _, chunk in ipairs(details.virt_text or {}) do
@@ -72,9 +76,11 @@ h.test("custom filetype configured via setup is rendered", function()
   })
 
   h.with_buffer({
+    "prose before",
     "| A | B |",
     "| --- | --- |",
     "| `code` | **bold** |",
+    "prose after",
   }, function(buf)
     vim.bo[buf].filetype = "opencode_output"
     plugin.refresh_auto({ force = true })
@@ -84,14 +90,14 @@ h.test("custom filetype configured via setup is rendered", function()
     for _, mark in ipairs(marks) do
       local row = mark[2]
       local details = mark[4] or {}
-      if details.conceal == "" then
+      if is_concealed(details) then
         concealed_rows[row] = true
       end
     end
 
-    h.assert_true("custom-filetype header concealed", concealed_rows[0])
-    h.assert_true("custom-filetype separator concealed", concealed_rows[1])
-    h.assert_true("custom-filetype row concealed", concealed_rows[2])
+    h.assert_true("custom-filetype header concealed", concealed_rows[1])
+    h.assert_true("custom-filetype separator concealed", concealed_rows[2])
+    h.assert_true("custom-filetype row concealed", concealed_rows[3])
 
     inline.clear(buf)
   end)
@@ -124,6 +130,56 @@ h.test("filetypes not in config are skipped", function()
   end)
 end)
 
+if vim.fn.has("nvim-0.11") == 1 then
+  h.test("nvim-0.11+ uses conceal_lines and preserves wrap", function()
+    local plugin = require("markdown-table-wrap")
+    local inline = require("markdown-table-wrap.inline")
+
+    plugin.setup({
+      debounce_ms = 0,
+      render_all = true,
+      auto_preview = true,
+      inline_viewport_scrolling = false,
+    })
+
+    h.with_buffer({
+      "prose before",
+      "| A | B |",
+      "| --- | --- |",
+      "| x | y |",
+      "prose after",
+    }, function(buf)
+      vim.bo[buf].filetype = "markdown"
+      vim.wo.wrap = true
+      plugin.refresh_auto({ force = true })
+
+      local marks = vim.api.nvim_buf_get_extmarks(buf, inline.namespace(), 0, -1, { details = true })
+      local has_conceal_lines = false
+      local has_legacy_conceal = false
+      local has_virt_lines_anchor = false
+      for _, mark in ipairs(marks) do
+        local details = mark[4] or {}
+        if details.conceal_lines == "" then
+          has_conceal_lines = true
+        end
+        if details.conceal == "" then
+          has_legacy_conceal = true
+        end
+        if details.virt_lines then
+          has_virt_lines_anchor = true
+        end
+      end
+
+      h.assert_true("uses conceal_lines on 0.11+", has_conceal_lines)
+      h.assert_false("does not use legacy conceal on 0.11+", has_legacy_conceal)
+      h.assert_true("renders table via virt_lines anchor", has_virt_lines_anchor)
+      h.assert_true("wrap preserved on 0.11+", vim.wo.wrap)
+
+      inline.clear(buf)
+    end)
+  end)
+end
+
 h.test("refresh_auto renders a non-current buffer when window exists", function()
   local plugin = require("markdown-table-wrap")
   local inline = require("markdown-table-wrap.inline")
@@ -143,9 +199,11 @@ h.test("refresh_auto renders a non-current buffer when window exists", function(
   vim.bo[target_buf].buftype = "nofile"
   vim.bo[target_buf].filetype = "opencode_output"
   vim.api.nvim_buf_set_lines(target_buf, 0, -1, false, {
+    "prose before",
     "| A | B |",
     "| --- | --- |",
     "| x | y |",
+    "prose after",
   })
 
   vim.cmd("split")
@@ -166,13 +224,13 @@ h.test("refresh_auto renders a non-current buffer when window exists", function(
   for _, mark in ipairs(marks) do
     local row = mark[2]
     local details = mark[4] or {}
-    if details.conceal == "" then
+    if is_concealed(details) then
       concealed_rows[row] = true
     end
   end
 
-  h.assert_true("cross-buffer render: header concealed", concealed_rows[0])
-  h.assert_true("cross-buffer render: row concealed", concealed_rows[2])
+  h.assert_true("cross-buffer render: header concealed", concealed_rows[1])
+  h.assert_true("cross-buffer render: row concealed", concealed_rows[3])
 
   inline.clear(target_buf)
   if vim.api.nvim_win_is_valid(target_win) then

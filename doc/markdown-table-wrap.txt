@@ -223,8 +223,12 @@ inline_virtual_text~
     "overlay" is the default and is generally the most portable choice.
 
 inline_disable_wrap~
-    Temporarily sets nowrap in windows showing inline replace mode so long
-    source rows do not soft-wrap underneath the rendered table.
+    On Neovim 0.10.x, temporarily sets nowrap in windows showing inline
+    replace mode so long source rows do not soft-wrap underneath the
+    rendered table. Ignored on Neovim 0.11+, where source lines are
+    concealed with the conceal_lines extmark option which collapses the
+    line's screen-row allocation entirely and removes the need to disable
+    wrap.
 
 auto_preview~
     Automatically render Markdown tables.

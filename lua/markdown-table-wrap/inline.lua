@@ -3,6 +3,7 @@ local render = require("markdown-table-wrap.render")
 local M = {}
 
 local namespace = vim.api.nvim_create_namespace("markdown-table-wrap")
+local supports_conceal_lines = vim.fn.has("nvim-0.11") == 1
 local saved_conceallevels = {}
 local saved_concealcursors = {}
 local saved_wraps = {}
@@ -184,7 +185,11 @@ local function set_render_window(winid, config)
   end
   vim.wo[winid].concealcursor = "nvc"
 
-  if config.inline_disable_wrap ~= false then
+  -- On Neovim 0.11+, conceal_lines collapses the source line entirely so
+  -- the soft-wrap-leak workaround is unnecessary. Only force nowrap on
+  -- older Neovim where the legacy conceal path still leaves wrapped screen
+  -- rows from concealed source lines.
+  if config.inline_disable_wrap ~= false and not supports_conceal_lines then
     if saved_wraps[winid] == nil then
       saved_wraps[winid] = vim.wo[winid].wrap
     end
@@ -224,7 +229,7 @@ local function restore_render_for_buffer(bufnr)
   end
 end
 
-local function conceal_source_line(bufnr, row)
+local function conceal_source_line_legacy(bufnr, row)
   local line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""
   if line == "" then
     return
@@ -236,6 +241,23 @@ local function conceal_source_line(bufnr, row)
     conceal = "",
     priority = 9999,
   })
+end
+
+local function conceal_source_line(bufnr, row)
+  local line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""
+  if line == "" then
+    return
+  end
+
+  if supports_conceal_lines then
+    vim.api.nvim_buf_set_extmark(bufnr, namespace, row, 0, {
+      conceal_lines = "",
+      priority = 9999,
+    })
+    return
+  end
+
+  conceal_source_line_legacy(bufnr, row)
 end
 
 local function table_key(table_info)
@@ -255,7 +277,64 @@ local function view_offset(bufnr, table_info, source_count, rendered_count, conf
   return offset
 end
 
-local function show_replace(bufnr, table_info, config, rendered)
+local show_replace_legacy
+
+local function show_replace_conceal_lines(bufnr, table_info, config, rendered)
+  local source_count = table_info.end_lnum - table_info.start_lnum + 1
+  local start_row = table_info.start_lnum - 1
+  local end_row = table_info.end_lnum - 1
+  local priority = config.overlay_priority or 10000
+  local line_count = vim.api.nvim_buf_line_count(bufnr)
+
+  -- conceal_lines collapses each source row to zero screen rows, so
+  -- virt_text overlays anchored on those rows have nowhere to draw, and
+  -- virt_lines attached to a conceal_lines-hidden anchor do not render
+  -- either. We anchor the rendered table as a single virt_lines block on
+  -- a nearby unconcealed line: prefer the row immediately before the
+  -- table; otherwise the row immediately after with virt_lines_above.
+  -- When the entire buffer is the table, fall back to the legacy
+  -- per-line overlay path (which forces nowrap as a side effect).
+  if start_row == 0 and end_row + 1 >= line_count then
+    show_replace_legacy(bufnr, table_info, config, rendered)
+    return
+  end
+
+  set_render_for_buffer(bufnr, config)
+
+  for source_offset = 0, source_count - 1 do
+    conceal_source_line(bufnr, start_row + source_offset)
+  end
+
+  local rendered_lines = virt_lines(rendered.line_objects or rendered.lines)
+  local anchor_row, above
+  if start_row > 0 then
+    anchor_row = start_row - 1
+    above = false
+  else
+    anchor_row = end_row + 1
+    above = true
+  end
+
+  vim.api.nvim_buf_set_extmark(bufnr, namespace, anchor_row, 0, {
+    virt_lines = rendered_lines,
+    virt_lines_above = above,
+    right_gravity = false,
+    priority = priority,
+  })
+end
+
+show_replace_legacy = function(bufnr, table_info, config, rendered)
+  -- The legacy overlay path needs visible source screen rows to anchor
+  -- virt_text overlays, so always force nowrap for this render even on
+  -- nvim 0.11+ where the conceal_lines path normally preserves wrap.
+  for _, winid in ipairs(vim.fn.win_findbuf(bufnr)) do
+    if vim.api.nvim_win_is_valid(winid) then
+      if saved_wraps[winid] == nil then
+        saved_wraps[winid] = vim.wo[winid].wrap
+      end
+      vim.wo[winid].wrap = false
+    end
+  end
   set_render_for_buffer(bufnr, config)
 
   local source_count = table_info.end_lnum - table_info.start_lnum + 1
@@ -270,7 +349,7 @@ local function show_replace(bufnr, table_info, config, rendered)
   local priority = config.overlay_priority or 10000
 
   for source_offset = 0, source_count - 1 do
-    conceal_source_line(bufnr, start_row + source_offset)
+    conceal_source_line_legacy(bufnr, start_row + source_offset)
   end
 
   for source_offset = 0, overlay_count - 1 do
@@ -303,6 +382,14 @@ local function show_replace(bufnr, table_info, config, rendered)
       right_gravity = false,
       priority = priority,
     })
+  end
+end
+
+local function show_replace(bufnr, table_info, config, rendered)
+  if supports_conceal_lines then
+    show_replace_conceal_lines(bufnr, table_info, config, rendered)
+  else
+    show_replace_legacy(bufnr, table_info, config, rendered)
   end
 end
 
