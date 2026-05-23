@@ -194,6 +194,72 @@ local function natural_widths(table_info)
   return widths
 end
 
+local break_chars = {
+  [" "] = true, ["\t"] = true,
+  ["、"] = true, ["，"] = true, [","] = true,
+  ["；"] = true, [";"] = true, ["/"] = true,
+}
+
+local function indivisible_widths(table_info)
+  local columns = #table_info.header
+  local widths = {}
+  local rows = all_rows(table_info)
+
+  for col = 1, columns do
+    local floor = 0
+    for _, row in ipairs(rows) do
+      local cell = row[col]
+      if cell then
+        -- Code spans are rendered as a single indivisible chunk by
+        -- wrap.wrap_cell. Other text breaks only at break_chars. Compute
+        -- the widest unbreakable token to use as a column-width floor so
+        -- such tokens never overflow the column boundary.
+        local cell_text = type(cell) == "table" and cell.text or cell or ""
+        local spans = type(cell) == "table" and cell.spans or {}
+
+        local in_code = {}
+        for _, span in ipairs(spans) do
+          if span.kind == "code" then
+            for i = span.start_col, span.end_col - 1 do
+              in_code[i] = true
+            end
+          end
+        end
+
+        local code_run = 0
+        local text_run = 0
+        local byte = 0
+        for ch in cell_text:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+          local is_code = in_code[byte]
+          if is_code then
+            code_run = code_run + width.strwidth(ch)
+            if text_run > 0 then
+              floor = math.max(floor, text_run)
+              text_run = 0
+            end
+          else
+            if code_run > 0 then
+              floor = math.max(floor, code_run)
+              code_run = 0
+            end
+            if break_chars[ch] then
+              floor = math.max(floor, text_run)
+              text_run = 0
+            else
+              text_run = text_run + width.strwidth(ch)
+            end
+          end
+          byte = byte + #ch
+        end
+        floor = math.max(floor, code_run, text_run)
+      end
+    end
+    widths[col] = floor
+  end
+
+  return widths
+end
+
 local function table_width(col_widths)
   local total = 1
   for _, col_width in ipairs(col_widths) do
@@ -216,20 +282,25 @@ local function distribute_widths(table_info, config)
   local border_cost = 1 + (columns * 3)
   local content_budget = math.max(columns * config.min_col_width, available - border_cost)
   local widths = natural_widths(table_info)
+  local floors = indivisible_widths(table_info)
 
   for index = 1, columns do
-    widths[index] = math.max(config.min_col_width, math.min(widths[index], config.max_col_width))
+    local lower = math.max(config.min_col_width, floors[index])
+    widths[index] = math.max(lower, math.min(widths[index], config.max_col_width))
   end
 
   while sum(widths) > content_budget do
-    local widest_index = 1
-    for index = 2, columns do
-      if widths[index] > widths[widest_index] then
-        widest_index = index
+    local widest_index = nil
+    for index = 1, columns do
+      local lower = math.max(config.min_col_width, floors[index])
+      if widths[index] > lower then
+        if not widest_index or widths[index] > widths[widest_index] then
+          widest_index = index
+        end
       end
     end
 
-    if widths[widest_index] <= config.min_col_width then
+    if not widest_index then
       break
     end
 
