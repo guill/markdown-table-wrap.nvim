@@ -273,7 +273,7 @@ Options:
 - `overlay_priority`: extmark priority used to cover other renderers such as `render-markdown.nvim`.
 - `overlay_fill`: fill the rest of each rendered source line with blank overlay text so long source rows do not leak past the rendered table.
 - `inline_virtual_text`: `"overlay"` or `"win_col"` for the replace-mode virtual text strategy. The default `"overlay"` is the more portable path.
-- `inline_disable_wrap`: on Neovim 0.10.x, temporarily set `nowrap` in windows showing inline replace mode so long source rows do not soft-wrap underneath the rendered table. Ignored on Neovim 0.11+, where source lines are concealed via the `conceal_lines` extmark option which collapses the line's screen-row allocation entirely and removes the need to disable wrap.
+- `inline_disable_wrap`: on Neovim 0.10.x, temporarily set `nowrap` in windows showing inline replace mode so long source rows do not soft-wrap underneath the rendered table. Ignored on Neovim 0.11+, where soft-wrap continuations of long source rows are painted with an empty-cells overlay via `virt_text_repeat_linebreak` so the rendered table's borders stay visually continuous without forcing nowrap.
 - `inline_viewport_scrolling`: when `true`, `:MarkdownTableScrollDown` and `:MarkdownTableScrollUp` page through rendered rows inside the original table height. The default is `false`, which shows the complete rendered table inline with extra virtual lines.
 - `highlight_preset`: `"default"`, `"tokyonight"`, `"catppuccin"`, `"render_markdown"`, or `"auto"`. The default preset follows standard Neovim highlight groups so it fits arbitrary colorschemes without extra theme tuning.
 - `theme_dir`: optional directory containing custom theme files named `<preset>.lua`.

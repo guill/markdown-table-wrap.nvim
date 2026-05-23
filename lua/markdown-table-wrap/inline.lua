@@ -3,7 +3,7 @@ local render = require("markdown-table-wrap.render")
 local M = {}
 
 local namespace = vim.api.nvim_create_namespace("markdown-table-wrap")
-local supports_conceal_lines = vim.fn.has("nvim-0.11") == 1
+local supports_repeat_linebreak = vim.fn.has("nvim-0.11") == 1
 local saved_conceallevels = {}
 local saved_concealcursors = {}
 local saved_wraps = {}
@@ -185,11 +185,12 @@ local function set_render_window(winid, config)
   end
   vim.wo[winid].concealcursor = "nvc"
 
-  -- On Neovim 0.11+, conceal_lines collapses the source line entirely so
-  -- the soft-wrap-leak workaround is unnecessary. Only force nowrap on
-  -- older Neovim where the legacy conceal path still leaves wrapped screen
-  -- rows from concealed source lines.
-  if config.inline_disable_wrap ~= false and not supports_conceal_lines then
+  -- On Neovim 0.11+, virt_text_repeat_linebreak paints an empty-cells
+  -- template across the wrap continuations of long source rows, so
+  -- forcing nowrap is unnecessary. Only force nowrap on older Neovim
+  -- where wrap continuations would appear as blank gaps inside the
+  -- rendered table.
+  if config.inline_disable_wrap ~= false and not supports_repeat_linebreak then
     if saved_wraps[winid] == nil then
       saved_wraps[winid] = vim.wo[winid].wrap
     end
@@ -229,7 +230,7 @@ local function restore_render_for_buffer(bufnr)
   end
 end
 
-local function conceal_source_line_legacy(bufnr, row)
+local function conceal_source_line(bufnr, row)
   local line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""
   if line == "" then
     return
@@ -241,23 +242,6 @@ local function conceal_source_line_legacy(bufnr, row)
     conceal = "",
     priority = 9999,
   })
-end
-
-local function conceal_source_line(bufnr, row)
-  local line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""
-  if line == "" then
-    return
-  end
-
-  if supports_conceal_lines then
-    vim.api.nvim_buf_set_extmark(bufnr, namespace, row, 0, {
-      conceal_lines = "",
-      priority = 9999,
-    })
-    return
-  end
-
-  conceal_source_line_legacy(bufnr, row)
 end
 
 local function table_key(table_info)
@@ -277,27 +261,29 @@ local function view_offset(bufnr, table_info, source_count, rendered_count, conf
   return offset
 end
 
-local show_replace_legacy
+local function empty_row_text(rendered)
+  if not rendered.col_widths or not rendered.chars then
+    return nil
+  end
+  local v = rendered.chars.vertical or "│"
+  local parts = { v }
+  for _, col_width in ipairs(rendered.col_widths) do
+    table.insert(parts, string.rep(" ", col_width + 2))
+    table.insert(parts, v)
+  end
+  return table.concat(parts)
+end
 
-local function show_replace_conceal_lines(bufnr, table_info, config, rendered)
+local function show_replace(bufnr, table_info, config, rendered)
   local source_count = table_info.end_lnum - table_info.start_lnum + 1
   local start_row = table_info.start_lnum - 1
-  local end_row = table_info.end_lnum - 1
-  local priority = config.overlay_priority or 10000
-  local line_count = vim.api.nvim_buf_line_count(bufnr)
-
-  -- conceal_lines collapses each source row to zero screen rows, so
-  -- virt_text overlays anchored on those rows have nowhere to draw, and
-  -- virt_lines attached to a conceal_lines-hidden anchor do not render
-  -- either. We anchor the rendered table as a single virt_lines block on
-  -- a nearby unconcealed line: prefer the row immediately before the
-  -- table; otherwise the row immediately after with virt_lines_above.
-  -- When the entire buffer is the table, fall back to the legacy
-  -- per-line overlay path (which forces nowrap as a side effect).
-  if start_row == 0 and end_row + 1 >= line_count then
-    show_replace_legacy(bufnr, table_info, config, rendered)
-    return
+  local overlay_width = rendered.width
+  if config.overlay_fill then
+    overlay_width = vim.api.nvim_win_get_width(0)
   end
+  local priority = config.overlay_priority or 10000
+  local line_objects = rendered.line_objects or rendered.lines
+  local spans = rendered.source_spans
 
   set_render_for_buffer(bufnr, config)
 
@@ -305,91 +291,228 @@ local function show_replace_conceal_lines(bufnr, table_info, config, rendered)
     conceal_source_line(bufnr, start_row + source_offset)
   end
 
-  local rendered_lines = virt_lines(rendered.line_objects or rendered.lines)
-  local anchor_row, above
-  if start_row > 0 then
-    anchor_row = start_row - 1
-    above = false
-  else
-    anchor_row = end_row + 1
-    above = true
-  end
+  -- Fallback for older render output without source_spans: legacy
+  -- 1-to-1-with-offset mapping (top border on source row 1, rendered[N]
+  -- on source row N-1, overflow as virt_lines on the last source row).
+  if not spans then
+    local rendered_count = #rendered.lines
+    local first_rendered = view_offset(bufnr, table_info, source_count, rendered_count, config)
+    local overlay_count = math.min(source_count, rendered_count - first_rendered)
 
-  vim.api.nvim_buf_set_extmark(bufnr, namespace, anchor_row, 0, {
-    virt_lines = rendered_lines,
-    virt_lines_above = above,
-    right_gravity = false,
-    priority = priority,
-  })
-end
-
-show_replace_legacy = function(bufnr, table_info, config, rendered)
-  -- The legacy overlay path needs visible source screen rows to anchor
-  -- virt_text overlays, so always force nowrap for this render even on
-  -- nvim 0.11+ where the conceal_lines path normally preserves wrap.
-  for _, winid in ipairs(vim.fn.win_findbuf(bufnr)) do
-    if vim.api.nvim_win_is_valid(winid) then
-      if saved_wraps[winid] == nil then
-        saved_wraps[winid] = vim.wo[winid].wrap
+    for source_offset = 0, overlay_count - 1 do
+      local line_obj = line_objects[first_rendered + source_offset + 1]
+      local mark = {
+        virt_text = padded_chunks(line_obj, first_rendered + source_offset + 1, overlay_width),
+        hl_mode = "replace",
+        right_gravity = false,
+        priority = priority + 1,
+      }
+      if config.inline_virtual_text == "win_col" then
+        mark.virt_text_win_col = 0
+      else
+        mark.virt_text_pos = "overlay"
       end
-      vim.wo[winid].wrap = false
+      vim.api.nvim_buf_set_extmark(bufnr, namespace, start_row + source_offset, 0, mark)
     end
-  end
-  set_render_for_buffer(bufnr, config)
 
-  local source_count = table_info.end_lnum - table_info.start_lnum + 1
-  local rendered_count = #rendered.lines
-  local first_rendered = view_offset(bufnr, table_info, source_count, rendered_count, config)
-  local overlay_count = math.min(source_count, rendered_count - first_rendered)
-  local start_row = table_info.start_lnum - 1
-  local overlay_width = rendered.width
-  if config.overlay_fill then
-    overlay_width = vim.api.nvim_win_get_width(0)
+    if rendered_count > overlay_count and not config.inline_viewport_scrolling then
+      local extra = {}
+      for index = overlay_count + 1, rendered_count do
+        table.insert(extra, line_objects[index])
+      end
+      vim.api.nvim_buf_set_extmark(bufnr, namespace, table_info.end_lnum - 1, 0, {
+        virt_lines = virt_lines(extra),
+        virt_lines_above = false,
+        right_gravity = false,
+        priority = priority,
+      })
+    end
+    return
   end
-  local priority = config.overlay_priority or 10000
 
+  -- Span-aware per-source-row mapping:
+  --
+  -- Narrow source rows (fit within the window) keep their single screen
+  -- row via `conceal "" + end_col` so they remain scrollable anchors;
+  -- the first rendered line of their span overlays that screen row, and
+  -- the remaining lines of the span go as virt_lines below.
+  --
+  -- Wide source rows (which would soft-wrap to multiple screen rows
+  -- under `wrap=true`) are collapsed via `conceal_lines = ""` and their
+  -- rendered span is appended to the virt_lines block of the nearest
+  -- narrow neighbor (preferring the preceding narrow row, falling back
+  -- to the next narrow row with `virt_lines_above`). This preserves
+  -- scrolling for the rest of the table even when individual rows are
+  -- much wider than the window.
+  --
+  -- Top/bottom borders attach to the first/last narrow neighbor as
+  -- virt_lines so they always have a visible anchor.
+  --
+  -- On Neovim 0.11+ an empty-cells overlay with
+  -- virt_text_repeat_linebreak paints the wrap continuations of narrow
+  -- rows that exceed the window width by just a little, so the
+  -- rendered table's borders stay visually continuous through any
+  -- residual soft-wrap.
+  local win_width = vim.api.nvim_win_get_width(0)
+  local empty_text = supports_repeat_linebreak and empty_row_text(rendered) or nil
+
+  local lines_of_span = function(span)
+    local out = {}
+    for i = span.first, span.last do
+      table.insert(out, line_objects[i])
+    end
+    return out
+  end
+
+  local is_wide = {}
+  local first_narrow, last_narrow = nil, nil
   for source_offset = 0, source_count - 1 do
-    conceal_source_line_legacy(bufnr, start_row + source_offset)
+    local source_line = vim.api.nvim_buf_get_lines(bufnr, start_row + source_offset, start_row + source_offset + 1, false)[1] or ""
+    local source_width = vim.api.nvim_strwidth(source_line)
+    is_wide[source_offset + 1] = source_width > win_width
+    if not is_wide[source_offset + 1] then
+      first_narrow = first_narrow or source_offset
+      last_narrow = source_offset
+    end
   end
 
-  for source_offset = 0, overlay_count - 1 do
-    local line_obj = (rendered.line_objects or rendered.lines)[first_rendered + source_offset + 1]
-    local mark = {
-      virt_text = padded_chunks(line_obj, first_rendered + source_offset + 1, overlay_width),
-      hl_mode = "replace",
-      right_gravity = false,
-      priority = priority,
-    }
+  if not first_narrow then
+    -- Every source row is wider than the window. Anchor a single
+    -- virt_lines block on a row outside the table; if none exists,
+    -- skip rendering rather than dropping content silently.
+    local line_count = vim.api.nvim_buf_line_count(bufnr)
+    local all = {}
+    if rendered.top_border_index then
+      table.insert(all, line_objects[rendered.top_border_index])
+    end
+    for offset = 0, source_count - 1 do
+      for _, line in ipairs(lines_of_span(spans[offset + 1])) do
+        table.insert(all, line)
+      end
+    end
+    if rendered.bottom_border_index then
+      table.insert(all, line_objects[rendered.bottom_border_index])
+    end
+    vim.api.nvim_buf_clear_namespace(bufnr, namespace, start_row, table_info.end_lnum)
+    for source_offset = 0, source_count - 1 do
+      vim.api.nvim_buf_set_extmark(bufnr, namespace, start_row + source_offset, 0, {
+        conceal_lines = "",
+        priority = 9999,
+      })
+    end
+    if start_row > 0 then
+      vim.api.nvim_buf_set_extmark(bufnr, namespace, start_row - 1, 0, {
+        virt_lines = virt_lines(all),
+        virt_lines_above = false,
+        right_gravity = false,
+        priority = priority,
+      })
+    elseif table_info.end_lnum < line_count then
+      vim.api.nvim_buf_set_extmark(bufnr, namespace, table_info.end_lnum, 0, {
+        virt_lines = virt_lines(all),
+        virt_lines_above = true,
+        right_gravity = false,
+        priority = priority,
+      })
+    end
+    return
+  end
 
-    if config.inline_virtual_text == "win_col" then
-      mark.virt_text_win_col = 0
+  local plan = {}
+  for offset = 0, source_count - 1 do
+    plan[offset + 1] = { extras_below = {} }
+  end
+  local extras_above_first_narrow = {}
+
+  if rendered.top_border_index then
+    table.insert(extras_above_first_narrow, line_objects[rendered.top_border_index])
+  end
+
+  local last_seen_narrow = nil
+  for offset = 0, source_count - 1 do
+    if is_wide[offset + 1] then
+      local lines_for_this = lines_of_span(spans[offset + 1])
+      if last_seen_narrow then
+        for _, l in ipairs(lines_for_this) do
+          table.insert(plan[last_seen_narrow + 1].extras_below, l)
+        end
+      else
+        for _, l in ipairs(lines_for_this) do
+          table.insert(extras_above_first_narrow, l)
+        end
+      end
     else
-      mark.virt_text_pos = "overlay"
+      last_seen_narrow = offset
+      local span = spans[offset + 1]
+      for i = span.first + 1, span.last do
+        table.insert(plan[offset + 1].extras_below, line_objects[i])
+      end
     end
-
-    vim.api.nvim_buf_set_extmark(bufnr, namespace, start_row + source_offset, 0, mark)
   end
 
-  if rendered_count > overlay_count and not config.inline_viewport_scrolling then
-    local extra = {}
-    for index = overlay_count + 1, rendered_count do
-      table.insert(extra, (rendered.line_objects or rendered.lines)[index])
-    end
+  if rendered.bottom_border_index then
+    table.insert(plan[last_narrow + 1].extras_below, line_objects[rendered.bottom_border_index])
+  end
 
-    vim.api.nvim_buf_set_extmark(bufnr, namespace, table_info.end_lnum - 1, 0, {
-      virt_lines = virt_lines(extra),
-      virt_lines_above = false,
+  for offset = 0, source_count - 1 do
+    if is_wide[offset + 1] then
+      vim.api.nvim_buf_clear_namespace(bufnr, namespace, start_row + offset, start_row + offset + 1)
+      vim.api.nvim_buf_set_extmark(bufnr, namespace, start_row + offset, 0, {
+        conceal_lines = "",
+        priority = 9999,
+      })
+    end
+  end
+
+  for offset = 0, source_count - 1 do
+    if not is_wide[offset + 1] then
+      local span = spans[offset + 1]
+      local first_line = line_objects[span.first]
+      if first_line then
+        local mark = {
+          virt_text = padded_chunks(first_line, span.first, overlay_width),
+          hl_mode = "replace",
+          right_gravity = false,
+          priority = priority + 1,
+        }
+        if config.inline_virtual_text == "win_col" then
+          mark.virt_text_win_col = 0
+        else
+          mark.virt_text_pos = "overlay"
+        end
+        vim.api.nvim_buf_set_extmark(bufnr, namespace, start_row + offset, 0, mark)
+
+        if empty_text and config.inline_virtual_text ~= "win_col" then
+          vim.api.nvim_buf_set_extmark(bufnr, namespace, start_row + offset, 0, {
+            virt_text = { { empty_text, "MarkdownTableWrapBorder" } },
+            virt_text_pos = "overlay",
+            virt_text_repeat_linebreak = true,
+            hl_mode = "replace",
+            right_gravity = false,
+            priority = priority,
+          })
+        end
+      end
+
+      local extras = plan[offset + 1].extras_below
+      if #extras > 0 then
+        vim.api.nvim_buf_set_extmark(bufnr, namespace, start_row + offset, 0, {
+          virt_lines = virt_lines(extras),
+          virt_lines_above = false,
+          right_gravity = false,
+          priority = priority,
+        })
+      end
+    end
+  end
+
+  if #extras_above_first_narrow > 0 then
+    vim.api.nvim_buf_set_extmark(bufnr, namespace, start_row + first_narrow, 0, {
+      virt_lines = virt_lines(extras_above_first_narrow),
+      virt_lines_above = true,
       right_gravity = false,
       priority = priority,
     })
-  end
-end
-
-local function show_replace(bufnr, table_info, config, rendered)
-  if supports_conceal_lines then
-    show_replace_conceal_lines(bufnr, table_info, config, rendered)
-  else
-    show_replace_legacy(bufnr, table_info, config, rendered)
   end
 end
 

@@ -310,32 +310,46 @@ function M.render_table(table_info, config)
   local chars = border_chars(config)
   local col_widths = distribute_widths(table_info, config)
   local lines = {}
+  local source_spans = {}
 
   table.insert(lines, border_line(chars, chars.top_left, chars.top_join, chars.top_right, col_widths))
+  local top_border_index = #lines
 
+  local header_first = #lines + 1
   for _, line in ipairs(render_row(table_info.header, col_widths, table_info.align, chars, config)) do
     table.insert(lines, line)
   end
+  table.insert(source_spans, { first = header_first, last = #lines })
 
   table.insert(lines, border_line(chars, chars.mid_left, chars.mid_join, chars.mid_right, col_widths))
+  table.insert(source_spans, { first = #lines, last = #lines })
 
   for row_index, row in ipairs(table_info.rows) do
+    local row_first = #lines + 1
     for _, line in ipairs(render_row(row, col_widths, table_info.align, chars, config)) do
       table.insert(lines, line)
     end
+    table.insert(source_spans, { first = row_first, last = #lines })
 
     if config.row_separator and row_index < #table_info.rows then
       table.insert(lines, row_separator_line(chars, col_widths))
+      source_spans[#source_spans].last = #lines
     end
   end
 
   table.insert(lines, border_line(chars, chars.bottom_left, chars.bottom_join, chars.bottom_right, col_widths))
+  local bottom_border_index = #lines
 
   return {
     lines = vim.tbl_map(text_of, lines),
     line_objects = lines,
     width = table_width(col_widths),
     height = #lines,
+    col_widths = col_widths,
+    chars = chars,
+    source_spans = source_spans,
+    top_border_index = top_border_index,
+    bottom_border_index = bottom_border_index,
     start_lnum = table_info.start_lnum,
     end_lnum = table_info.end_lnum,
   }

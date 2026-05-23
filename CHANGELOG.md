@@ -13,7 +13,7 @@ All notable changes to `markdown-table-wrap.nvim` are documented here.
 
 - The internal `is_markdown_buffer` check and the `gx` mapping autocmd now read the allowed filetype list from `M.config.filetypes` instead of a hardcoded list.
 - `refresh_auto` is now a small dispatch wrapper around `refresh_auto_impl`. Behavior for the existing autocmd-driven, same-buffer path is unchanged; the new cross-buffer path is opt-in via `opts.bufnr`.
-- On Neovim 0.11+, source table lines are concealed with the new `conceal_lines = ""` extmark option instead of `conceal = ""` with `end_col`. This collapses the concealed line's screen-row allocation entirely, so window-local `wrap` no longer needs to be forced off to avoid soft-wrap gaps between rendered table rows. The window's `wrap` setting is preserved on 0.11+ regardless of `inline_disable_wrap`. The legacy concealment path is retained on Neovim 0.10.x where `conceal_lines` is unavailable.
+- On Neovim 0.11+, the inline replace renderer paints a secondary "empty cells" overlay on each source row with `virt_text_repeat_linebreak = true`, which tiles across soft-wrap continuations of long source lines. This eliminates the blank screen-row gaps that previously appeared inside the rendered table when source rows exceeded the window width, while preserving the window's `wrap` setting and allowing natural arrow-key scrolling through tall tables. `inline_disable_wrap` is ignored on 0.11+ unless explicitly set; the legacy nowrap behavior is retained on Neovim 0.10.x where `virt_text_repeat_linebreak` is unavailable.
 
 ## 0.1.2 - Setup And Defaults Cleanup
 

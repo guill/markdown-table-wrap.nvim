@@ -31,7 +31,7 @@ h.test("inline whole-buffer render uses extmarks and conceal options", function(
     h.assert_eq("conceallevel set", vim.wo.conceallevel, 2)
     h.assert_eq("concealcursor set", vim.wo.concealcursor, "nvc")
     if vim.fn.has("nvim-0.11") == 1 then
-      h.assert_true("wrap preserved on nvim-0.11+ (conceal_lines path)", vim.wo.wrap)
+      h.assert_true("wrap preserved on nvim-0.11+ (repeat_linebreak path)", vim.wo.wrap)
     else
       h.assert_false("wrap disabled while inline replace is active", vim.wo.wrap)
     end

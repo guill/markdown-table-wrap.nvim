@@ -225,10 +225,10 @@ inline_virtual_text~
 inline_disable_wrap~
     On Neovim 0.10.x, temporarily sets nowrap in windows showing inline
     replace mode so long source rows do not soft-wrap underneath the
-    rendered table. Ignored on Neovim 0.11+, where source lines are
-    concealed with the conceal_lines extmark option which collapses the
-    line's screen-row allocation entirely and removes the need to disable
-    wrap.
+    rendered table. Ignored on Neovim 0.11+, where soft-wrap continuations
+    of long source rows are painted with an empty-cells overlay via the
+    virt_text_repeat_linebreak extmark option so the rendered table's
+    borders stay visually continuous without forcing nowrap.
 
 auto_preview~
     Automatically render Markdown tables.

@@ -131,7 +131,7 @@ h.test("filetypes not in config are skipped", function()
 end)
 
 if vim.fn.has("nvim-0.11") == 1 then
-  h.test("nvim-0.11+ uses conceal_lines and preserves wrap", function()
+  h.test("nvim-0.11+ uses repeat_linebreak overlay and preserves wrap", function()
     local plugin = require("markdown-table-wrap")
     local inline = require("markdown-table-wrap.inline")
 
@@ -154,25 +154,25 @@ if vim.fn.has("nvim-0.11") == 1 then
       plugin.refresh_auto({ force = true })
 
       local marks = vim.api.nvim_buf_get_extmarks(buf, inline.namespace(), 0, -1, { details = true })
-      local has_conceal_lines = false
-      local has_legacy_conceal = false
-      local has_virt_lines_anchor = false
+      local has_conceal = false
+      local has_repeat_linebreak = false
+      local has_overlay = false
       for _, mark in ipairs(marks) do
         local details = mark[4] or {}
-        if details.conceal_lines == "" then
-          has_conceal_lines = true
-        end
         if details.conceal == "" then
-          has_legacy_conceal = true
+          has_conceal = true
         end
-        if details.virt_lines then
-          has_virt_lines_anchor = true
+        if details.virt_text_repeat_linebreak then
+          has_repeat_linebreak = true
+        end
+        if details.virt_text_pos == "overlay" then
+          has_overlay = true
         end
       end
 
-      h.assert_true("uses conceal_lines on 0.11+", has_conceal_lines)
-      h.assert_false("does not use legacy conceal on 0.11+", has_legacy_conceal)
-      h.assert_true("renders table via virt_lines anchor", has_virt_lines_anchor)
+      h.assert_true("uses legacy conceal to hide source text", has_conceal)
+      h.assert_true("uses per-row overlay rendering", has_overlay)
+      h.assert_true("emits virt_text_repeat_linebreak overlays on 0.11+", has_repeat_linebreak)
       h.assert_true("wrap preserved on 0.11+", vim.wo.wrap)
 
       inline.clear(buf)
